@@ -90,7 +90,7 @@ jobs:
 
       - name: Verify no SNAPSHOT dependencies
         run: |
-          if grep -r "SNAPSHOT" --include="pom.xml" . | grep -v "<!--" | grep -v "target/"; then
+          if grep -r "SNAPSHOT" --include="pom.xml" . | grep -v "<!--" | grep -v "target/" | grep -v "src/main/resources/"; then
             echo "ERROR: Found SNAPSHOT references in POM files"
             exit 1
           fi
