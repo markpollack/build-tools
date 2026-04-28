@@ -38,9 +38,33 @@ jobs:
           MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
 
-      - name: Create Git tag
+      - name: Commit release version
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
+          git add -A
+          git commit -m "Release ${{ inputs.version }}"
+
+      - name: Create Git tag
+        run: |
           git tag -a v${{ inputs.version }} -m "Release v${{ inputs.version }}"
           git push origin v${{ inputs.version }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: Release ${{ inputs.version }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+
+      - name: Bump to next SNAPSHOT version
+        run: |
+          IFS='.' read -r major minor patch <<< "${{ inputs.version }}"
+          NEXT_VERSION="${major}.$((minor + 1)).0-SNAPSHOT"
+          echo "Bumping to next development version: ${NEXT_VERSION}"
+          mvn versions:set -DnewVersion=${NEXT_VERSION} -DgenerateBackupPoms=false
+          git add -A
+          git commit -m "Bump development version to ${NEXT_VERSION}"
+          git push origin HEAD:main
