@@ -1,22 +1,18 @@
 # Reusable Maven Central Release Workflow
 #
-# This workflow handles the complete release process:
-# 1. Sets the release version
-# 2. Builds and verifies
-# 3. Publishes to Maven Central (with GPG signing)
-# 4. Creates Git tag and GitHub Release
-#
-# Usage in calling repository:
-# jobs:
-#   release:
-#     uses: markpollack/build-tools/.github/workflows/maven-central-release.yml@main
-#     with:
-#       version: '0.1.0'
-#     secrets:
-#       MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}
-#       MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
-#       GPG_SECRET_KEY: ${{ secrets.GPG_SECRET_KEY }}
-#       GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+# Usage:
+#   jobs:
+#     release:
+#       uses: markpollack/build-tools/.github/workflows/maven-central-release.yml@main
+#       with:
+#         version: '0.1.0'
+#         java-version: '21'
+#         agent-clis: 'claude,gemini'   # optional
+#       secrets:
+#         MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}
+#         MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
+#         GPG_SECRET_KEY: ${{ secrets.GPG_SECRET_KEY }}
+#         GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
 
 name: Maven Central Release
 
@@ -31,7 +27,7 @@ on:
         description: 'Java version to use'
         required: false
         type: string
-        default: '17'
+        default: '21'
       java-distribution:
         description: 'Java distribution to use'
         required: false
@@ -52,6 +48,11 @@ on:
         required: false
         type: string
         default: 'v'
+      agent-clis:
+        description: 'Comma-separated agent CLIs to install (claude,gemini,codex,amazon-q)'
+        required: false
+        type: string
+        default: ''
     secrets:
       MAVEN_USERNAME:
         description: 'Maven Central username'
@@ -65,6 +66,12 @@ on:
       GPG_PASSPHRASE:
         description: 'GPG passphrase'
         required: true
+      ANTHROPIC_API_KEY:
+        description: 'Anthropic API key for integration tests'
+        required: false
+      GEMINI_API_KEY:
+        description: 'Google API key for integration tests'
+        required: false
 
 jobs:
   release:
@@ -72,6 +79,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Setup agent CLIs
+        if: ${{ inputs.agent-clis != '' }}
+        uses: markpollack/build-tools/.github/actions/setup-agent-clis@main
+        with:
+          clis: ${{ inputs.agent-clis }}
 
       - name: Set up JDK ${{ inputs.java-version }}
         uses: actions/setup-java@v4
@@ -97,6 +110,9 @@ jobs:
           echo "No SNAPSHOT dependencies found"
 
       - name: Build and verify
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           if [ "${{ inputs.skip-tests }}" = "true" ]; then
             ./mvnw clean verify -B -DskipTests

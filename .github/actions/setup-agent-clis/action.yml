@@ -1,0 +1,56 @@
+# Composite action: Install agentic CLI tools
+#
+# Usage:
+#   - uses: markpollack/build-tools/.github/actions/setup-agent-clis@main
+#     with:
+#       clis: claude,gemini
+
+name: Setup Agent CLIs
+description: Install agentic CLI tools (Claude Code, Gemini CLI, Codex, Amazon Q)
+
+inputs:
+  clis:
+    description: 'Comma-separated list of CLIs to install: claude,gemini,codex,amazon-q'
+    required: false
+    default: ''
+  node-version:
+    description: 'Node.js version for npm-based CLIs'
+    required: false
+    default: '22'
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js
+      if: ${{ inputs.clis != '' }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Install Claude Code CLI
+      if: ${{ contains(inputs.clis, 'claude') }}
+      shell: bash
+      run: |
+        npm install -g @anthropic-ai/claude-code --silent
+        echo "Claude CLI installed: $(claude --version 2>&1)"
+
+    - name: Install Gemini CLI
+      if: ${{ contains(inputs.clis, 'gemini') }}
+      shell: bash
+      run: |
+        npm install -g @google/gemini-cli --silent
+        echo "Gemini CLI installed: $(gemini --version 2>&1)"
+
+    - name: Install Codex CLI
+      if: ${{ contains(inputs.clis, 'codex') }}
+      shell: bash
+      run: |
+        npm install -g @openai/codex --silent
+        echo "Codex CLI installed: $(codex --version 2>&1)"
+
+    - name: Install Amazon Q CLI
+      if: ${{ contains(inputs.clis, 'amazon-q') }}
+      shell: bash
+      run: |
+        npm install -g @amzn/amazon-q-developer-cli --silent
+        echo "Amazon Q CLI installed: $(q --version 2>&1)"
