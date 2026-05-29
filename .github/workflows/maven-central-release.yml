@@ -141,6 +141,26 @@ jobs:
           git tag -a ${{ inputs.tag-prefix }}${{ inputs.version }} -m "Release ${{ inputs.tag-prefix }}${{ inputs.version }}"
           git push origin ${{ inputs.tag-prefix }}${{ inputs.version }}
 
+      - name: Build release notes
+        if: ${{ inputs.create-tag }}
+        id: release-notes
+        run: |
+          TAG="${{ inputs.tag-prefix }}${{ inputs.version }}"
+          # Find the previous tag (most recent tag before this one)
+          PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${TAG}$" | head -1)
+          if [ -n "$PREV_TAG" ]; then
+            NOTES=$(git log --oneline "${PREV_TAG}..${TAG}" --no-merges -- . ':!pom.xml' ':!*/pom.xml' | grep -v "Release " | grep -v "Bump development version")
+            if [ -z "$NOTES" ]; then
+              NOTES="Version bump only — no functional changes since ${PREV_TAG}."
+            else
+              NOTES=$(printf "## Changes since %s\n\n%s" "$PREV_TAG" "$NOTES")
+            fi
+          else
+            NOTES="Initial release."
+          fi
+          # Write to file to preserve newlines
+          echo "$NOTES" > /tmp/release-notes.md
+
       - name: Create GitHub Release
         if: ${{ inputs.create-tag }}
         uses: softprops/action-gh-release@v2
@@ -149,7 +169,7 @@ jobs:
           name: Release ${{ inputs.version }}
           draft: false
           prerelease: ${{ contains(inputs.version, '-') }}
-          generate_release_notes: true
+          body_path: /tmp/release-notes.md
 
       - name: Bump to next SNAPSHOT version
         if: ${{ inputs.create-tag }}
