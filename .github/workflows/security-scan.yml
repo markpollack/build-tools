@@ -1,0 +1,84 @@
+# Reusable Security Scan Workflow (OWASP dependency-check CVE gate)
+#
+# Runs the project's `owasp` Maven profile (dependency-check, failBuildOnCVSS) so the
+# build-time CVE gate is enforced in CI, not just available locally. Tests are skipped
+# (-DskipTests) so the scan does not require integration-test infra (agent CLIs / API keys).
+#
+# Usage — add .github/workflows/security.yml to a repo:
+#   name: Security Scan
+#   on:
+#     push:
+#       branches: [main]
+#       paths: ['**/pom.xml']      # dependency changes
+#     schedule:
+#       - cron: '0 7 * * *'        # nightly — catch newly-disclosed CVEs in unchanged deps
+#     workflow_dispatch:
+#   jobs:
+#     scan:
+#       uses: markpollack/build-tools/.github/workflows/security-scan.yml@main
+#       secrets:
+#         NVD_API_KEY: ${{ secrets.NVD_API_KEY }}   # optional; speeds up the NVD update
+#
+name: Security Scan
+
+on:
+  workflow_call:
+    inputs:
+      java-version:
+        description: 'Java version to use'
+        required: false
+        type: string
+        default: '21'
+      java-distribution:
+        description: 'Java distribution to use'
+        required: false
+        type: string
+        default: 'temurin'
+      fail-on-cvss:
+        description: 'CVSS score that fails the build (HIGH = 7.0)'
+        required: false
+        type: string
+        default: '7.0'
+    secrets:
+      NVD_API_KEY:
+        description: 'NVD API key — avoids NVD rate-limiting on the data update (optional but recommended)'
+        required: false
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ inputs.java-version }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ inputs.java-version }}
+          distribution: ${{ inputs.java-distribution }}
+          cache: maven
+
+      # Cache the OWASP NVD database so only the first run pays the full download.
+      - name: Cache OWASP NVD data
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-data
+          key: owasp-nvd-${{ runner.os }}-v1
+          restore-keys: |
+            owasp-nvd-${{ runner.os }}-
+
+      - name: OWASP dependency-check (fail on CVSS >= ${{ inputs.fail-on-cvss }})
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: |
+          ./mvnw -B -Powasp verify -DskipTests \
+            -DfailBuildOnCVSS=${{ inputs.fail-on-cvss }} \
+            ${NVD_API_KEY:+-DnvdApiKey=$NVD_API_KEY}
+
+      - name: Upload dependency-check report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-report
+          path: '**/target/dependency-check-report.*'
+          retention-days: 14
