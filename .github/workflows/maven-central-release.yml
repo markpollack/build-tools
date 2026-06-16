@@ -149,7 +149,11 @@ jobs:
           # Find the previous tag (most recent tag before this one)
           PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${TAG}$" | head -1)
           if [ -n "$PREV_TAG" ]; then
-            NOTES=$(git log --oneline "${PREV_TAG}..${TAG}" --no-merges -- . ':!pom.xml' ':!*/pom.xml' | grep -v "Release " | grep -v "Bump development version")
+            # Commit list since the previous tag. pom.xml changes are INCLUDED — a BOM or
+            # dependency release IS its pom edits — and only the automated release/bump
+            # commits are filtered out (so a dependency-only release still gets real notes).
+            NOTES=$(git log --pretty=format:'- %s' --no-merges "${PREV_TAG}..${TAG}" \
+                    | grep -viE '^- (Release [0-9]|Bump (to |development version))')
             if [ -z "$NOTES" ]; then
               NOTES="Version bump only — no functional changes since ${PREV_TAG}."
             else
