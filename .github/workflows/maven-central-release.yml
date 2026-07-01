@@ -79,6 +79,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history + all tags so the "Build release notes" step can find the
+          # previous tag (PREV_TAG) and resolve the git log PREV_TAG..TAG range.
+          # Without this the shallow checkout has no prior tags -> notes fall back to
+          # the "Initial release." placeholder on every release.
+          fetch-depth: 0
 
       - name: Setup agent CLIs
         if: ${{ inputs.agent-clis != '' }}
