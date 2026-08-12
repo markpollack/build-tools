@@ -58,11 +58,6 @@ on:
         required: false
         type: string
         default: ''
-      release-assets:
-        description: 'Newline-delimited repository-relative file paths or globs to attach to the GitHub release'
-        required: false
-        type: string
-        default: ''
     secrets:
       MAVEN_USERNAME:
         description: 'Maven Central username'
@@ -162,24 +157,23 @@ jobs:
         id: release-notes
         env:
           RELEASE_NOTES_FILE: ${{ inputs.release-notes-file }}
-          RELEASE_ASSETS: ${{ inputs.release-assets }}
           RELEASE_NOTES_OUTPUT: /tmp/release-notes.md
         run: |
           python3 - <<'PY'
-          import glob
           import os
           from pathlib import Path, PurePosixPath
           import re
           import shutil
+          import stat
+          import subprocess
 
           LITERAL_PATH = re.compile(r"[A-Za-z0-9._/@+ -]+")
-          GLOB_PATH = re.compile(r"[A-Za-z0-9._/@+*? -]+")
           root = Path(os.environ["GITHUB_WORKSPACE"]).resolve()
 
           def fail(message):
               raise SystemExit(f"ERROR: {message}")
 
-          def validate(value, label, allow_glob):
+          def validate(value, label):
               if not value:
                   fail(f"{label} must not be empty")
               if len(value) > 256:
@@ -188,69 +182,60 @@ jobs:
                   fail(f"{label} must not have leading or trailing whitespace")
               if "\\" in value:
                   fail(f"{label} must use repository-relative POSIX separators")
-              allowed = GLOB_PATH if allow_glob else LITERAL_PATH
-              if allowed.fullmatch(value) is None:
+              if LITERAL_PATH.fullmatch(value) is None:
                   fail(f"{label} contains unsupported characters")
               path = PurePosixPath(value)
               if path.is_absolute():
                   fail(f"{label} must be relative to the repository")
+              if value.startswith("-"):
+                  fail(f"{label} must not be command-shaped")
               if value.endswith("/") or "//" in value:
-                  fail(f"{label} must name a file or file glob")
+                  fail(f"{label} must name one file")
               if any(part in ("", ".", "..") for part in value.split("/")):
                   fail(f"{label} must not contain '.' or '..' path segments")
-              if not allow_glob and any(character in value for character in "*?"):
+              if any(part == ".git" for part in path.parts):
+                  fail(f"{label} must not name Git administration paths")
+              if any(character in value for character in "*?"):
                   fail(f"{label} must name one file, not a glob")
-              if allow_glob:
-                  if sum(value.count(character) for character in "*?") > 8:
-                      fail(f"{label} contains too many glob metacharacters")
-                  recursive = [part for part in path.parts if "**" in part]
-                  if len(recursive) > 1 or any(part != "**" for part in recursive):
-                      fail(f"{label} may contain at most one complete '**' segment")
               return path
 
-          def resolve_inside_workspace(candidate, label):
+          def tracked_ordinary_file(path, label):
+              candidate = root.joinpath(*path.parts)
               try:
+                  current = root
+                  for part in path.parts:
+                      current = current / part
+                      if stat.S_ISLNK(current.lstat().st_mode):
+                          fail(f"{label} must not contain symlinks")
                   resolved = candidate.resolve(strict=True)
                   resolved.relative_to(root)
-              except (FileNotFoundError, RuntimeError, ValueError):
-                  fail(f"{label} must resolve to a file inside the repository")
-              return resolved
+              except (FileNotFoundError, OSError, RuntimeError, ValueError):
+                  fail(f"{label} must name an existing file inside the repository")
+              if not stat.S_ISREG(candidate.lstat().st_mode):
+                  fail(f"{label} must name an ordinary file")
+
+              tracked = subprocess.run(
+                  ["git", "ls-files", "--stage", "--error-unmatch", "--", path.as_posix()],
+                  cwd=root,
+                  check=False,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.DEVNULL,
+                  text=True,
+              )
+              entries = tracked.stdout.splitlines()
+              if tracked.returncode != 0 or len(entries) != 1:
+                  fail(f"{label} must name one tracked file in the caller repository")
+              mode = entries[0].split(maxsplit=1)[0]
+              if mode not in ("100644", "100755"):
+                  fail(f"{label} must name a tracked ordinary file")
+              return candidate
 
           notes = os.environ.get("RELEASE_NOTES_FILE", "")
           if notes:
-              path = validate(notes, "release-notes-file", False)
-              source = resolve_inside_workspace(
-                  root / Path(*path.parts), "release-notes-file"
-              )
-              if not source.is_file():
-                  fail("release-notes-file must resolve to a regular file")
+              path = validate(notes, "release-notes-file")
+              source = tracked_ordinary_file(path, "release-notes-file")
               shutil.copyfile(source, os.environ["RELEASE_NOTES_OUTPUT"])
               print(f"Using curated release notes from {path}")
-
-          assets = os.environ.get("RELEASE_ASSETS", "")
-          if assets:
-              patterns = [line for line in assets.splitlines() if line]
-              if not patterns:
-                  fail("release-assets must contain at least one non-empty path or glob")
-              if len(patterns) > 32:
-                  fail("release-assets accepts at most 32 paths or globs")
-              for index, pattern in enumerate(patterns, start=1):
-                  path = validate(pattern, f"release-assets line {index}", True)
-                  matches = []
-                  for match in glob.iglob(
-                      str(root / Path(*path.parts)), recursive=True, include_hidden=True
-                  ):
-                      resolved = resolve_inside_workspace(
-                          Path(match), f"release-assets line {index}"
-                      )
-                      if resolved.is_file():
-                          matches.append(resolved)
-                  if not matches:
-                      fail(
-                          f"release-assets line {index} did not match a repository file: {pattern}"
-                      )
-                  for match in sorted(set(matches)):
-                      print(match.relative_to(root).as_posix())
           PY
 
           if [ -n "$RELEASE_NOTES_FILE" ]; then
@@ -286,8 +271,6 @@ jobs:
           draft: false
           prerelease: ${{ contains(inputs.version, '-') }}
           body_path: /tmp/release-notes.md
-          files: ${{ inputs.release-assets }}
-          fail_on_unmatched_files: true
 
       - name: Bump to next SNAPSHOT version
         if: ${{ inputs.create-tag }}
